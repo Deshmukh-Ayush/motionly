@@ -157,3 +157,34 @@ def test_select_prefers_named_within_noise():
     assert select([bez, named]).name == "easeOutCubic"
     worse = Candidate("named", "linear", np.zeros(4), rss=10.0 + 2.0 * n, n=n, sigma=sigma)
     assert select([bez, worse]).kind == "bezier"
+
+
+def test_short_fast_back_out_not_flipped():
+    # clip_031: a 0.34 s easeOutBack over 529 px was fitted as easeInBack before the extra starts.
+    tw = Tween("x", 143.65, 672.89, 1.0784, 0.34, Ease("named", name="easeOutBack"))
+    fit = _fit_one(tw)
+    assert easing.curve_distance(_curve_of(fit), "easeOutBack") < 0.03, fit["ease"]
+    _check_timing(fit, tw, 1.0)
+
+
+def test_duration_capped_to_window():
+    tw = Tween("x", 100.0, 300.0, 0.5, 0.8, Ease("named", name="easeOutCubic"))
+    fit = _fit_one(tw)
+    assert fit["start_s"] + fit["duration_s"] <= T[-1] + 2 * FRAME
+
+
+def test_low_confidence_for_small_elements():
+    from motionly_engine.fit.timeline import fit_element
+    from motionly_engine.measure import ElementSignals
+
+    tw = Tween("x", 100.0, 300.0, 0.5, 0.8, Ease("named", name="easeOutCubic"))
+    rng = np.random.default_rng(3)
+    n = len(T)
+    sig = {"x": tw.value_at(T) + rng.normal(0, 0.2, n), "y": np.full(n, 50.0) + rng.normal(0, 0.2, n),
+           "scale": np.ones(n), "opacity": np.ones(n), "size_px": np.full(n, 4.0)}
+    for px, conf in ((12.0, "low"), (40.0, "measured")):
+        sig["width_px"], sig["height_px"] = np.full(n, px), np.full(n, px)
+        el = ElementSignals("el0", (0, 0, 400, 100), [255, 255, 255], dict(sig), np.full(n, 100.0))
+        tws = fit_element(el, T, 960, 540, FRAME)
+        assert [t["prop"] for t in tws] == ["x"]
+        assert tws[0]["confidence"] == conf

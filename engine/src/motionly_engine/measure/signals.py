@@ -1,6 +1,8 @@
-"""Per-element signals: x, y (intensity-weighted centroid), scale (second moments), opacity (mass / area)."""
+"""Per-element signals: x, y (intensity-weighted centroid), scale (second moments), opacity (solid core, or mass for thin shapes like text)."""
 
 from __future__ import annotations
+
+import warnings
 
 import cv2
 import numpy as np
@@ -43,20 +45,66 @@ class MomentAccumulator:
             fg = cv2.blur(m, (5, 5)) > self._tau[i]
             rows, cols = np.flatnonzero(fg.any(axis=1)), np.flatnonzero(fg.any(axis=0))
             if len(rows) == 0:
-                self.rows[i].append(np.zeros(5))
+                self.rows[i].append(np.array([0.0] * 6 + [np.nan] * 4))
                 continue
             r0, r1 = max(0, rows[0] - 3), rows[-1] + 4
             c0, c1 = max(0, cols[0] - 3), cols[-1] + 4
             w = m[r0:r1, c0:c1].astype(np.float64)
             xx, yy = self._grids[i][0][r0:r1, c0:c1], self._grids[i][1][r0:r1, c0:c1]
             wx, wy = w * xx, w * yy
-            self.rows[i].append(np.array([w.sum(), wx.sum(), wy.sum(), (wx * xx).sum(), (wy * yy).sum()]))
+            # Solid core: the 90th percentile of the weight over detected pixels is coverage 1 x opacity
+            # inside a filled shape, independent of its size and edge blur.
+            core = float(np.percentile(m[fg], 90))
+            y0, x0 = c.bbox[1], c.bbox[0]
+            self.rows[i].append(np.array([
+                w.sum(), wx.sum(), wy.sum(), (wx * xx).sum(), (wy * yy).sum(), core,
+                x0 + cols[0], y0 + rows[0], x0 + cols[-1] + 1, y0 + rows[-1] + 1,
+            ]))
 
     def moments(self) -> list[np.ndarray]:
-        return [np.array(r) for r in self.rows]  # each (n_frames, 5)
+        # each (n_frames, 10): m0, mx, my, mxx, myy (additive), core (max), extent x0, y0, x1, y1
+        return [np.array(r) for r in self.rows]
+
+
+def combine(parts: list[tuple[np.ndarray, float]]) -> np.ndarray:
+    """Merge component moments (each with its colour rescale factor)."""
+    out = sum(m[:, :5] * k for m, k in parts)
+    core = np.max(np.stack([m[:, 5] * k for m, k in parts]), axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN frames: element not visible
+        lo = np.nanmin(np.stack([m[:, 6:8] for m, _ in parts]), axis=0)
+        hi = np.nanmax(np.stack([m[:, 8:10] for m, _ in parts]), axis=0)
+    return np.column_stack([out, core, lo, hi])
 
 
 MIN_MASS = 3.0  # visible: at least ~3 fully covered pixels' worth of signal (absolute, not relative to peak)
+
+
+SOLID_CORE = 0.85  # raw core level (in coverage units) at full opacity above which the core is trusted
+SOLID_FILL = 0.6  # filled shapes (rect ~1, circle ~0.79) use the core; thin shapes (text) use mass
+
+
+def _opacity_from_mass(m0: np.ndarray, size: np.ndarray, idx: np.ndarray, peak: float) -> np.ndarray:
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dens = m0 / size**2
+    if not len(idx):
+        return np.zeros_like(m0)
+    d = dens[idx]
+    ref = float(np.median(d[d >= 0.9 * np.max(d)]))  # robust "fully opaque" level
+    # When the element is faint its size estimate is noisy: use the size from the nearest frame
+    # with a solid signal instead.
+    solid = np.nonzero(np.isfinite(size) & (m0 >= 0.05 * peak))[0]
+    if len(solid):
+        k = np.arange(len(m0))
+        near = solid[np.clip(np.searchsorted(solid, k), 0, len(solid) - 1)]
+        prev = solid[np.clip(np.searchsorted(solid, k) - 1, 0, len(solid) - 1)]
+        pick = np.where(np.abs(prev - k) < np.abs(near - k), prev, near)
+        size_for_op = np.where(m0 >= 0.05 * peak, size, size[pick])
+    else:
+        size_for_op = size
+    with np.errstate(divide="ignore", invalid="ignore"):
+        opacity = np.clip(m0, 0, None) / (ref * size_for_op**2)
+    return np.where(np.isfinite(opacity), opacity, 0.0)
 
 
 def signals_from_moments(mom: np.ndarray) -> dict[str, np.ndarray]:
@@ -69,33 +117,31 @@ def signals_from_moments(mom: np.ndarray) -> dict[str, np.ndarray]:
         var = mom[:, 3] / m0 - x * x + mom[:, 4] / m0 - y * y
         size = np.where(vis & (var > 0), np.sqrt(np.abs(var)), np.nan)
     idx = np.nonzero(np.isfinite(size))[0]
+    width = np.where(vis, mom[:, 8] - mom[:, 6], np.nan)
+    height = np.where(vis, mom[:, 9] - mom[:, 7], np.nan)
     # Scale is relative to the last well-visible frame (base size is unknowable from pixels).
     strong = np.nonzero(np.isfinite(size) & (m0 >= 0.5 * peak))[0]
     ref_i = strong[-1] if len(strong) else (idx[-1] if len(idx) else None)
     scale = size / size[ref_i] if ref_i is not None else size
-    # Opacity: mass / (size^2 * reference), reference = (robust) max over visible frames,
-    # i.e. assumes the element is fully opaque at some point.
+    # Opacity. Assumes the element is fully opaque at some point.
+    # Elements with a solid core (shapes): the core level (coverage-1 pixels) normalised to its robust
+    # "fully opaque" value; it does not drift with size or edge blur.
+    # Thin elements (text: few interior pixels, and compression smears moving strokes):
+    # mass / (size^2 * reference), as before.
+    core = np.where(m0 > 0, np.clip(mom[:, 5], 0, None), 0.0)
+    good = core[vis] if vis.any() else core
+    core_ref = float(np.median(good[good >= 0.9 * np.max(good)])) if len(good) and np.max(good) > 0 else 0.0
+    # Fill = mass / (core x extent area): ~1 for rects, ~0.79 for circles, much lower for text.
+    strong = vis & (m0 >= 0.5 * peak) & (core > 0)
     with np.errstate(divide="ignore", invalid="ignore"):
-        dens = m0 / size**2
-    if len(idx):
-        d = dens[idx]
-        ref = float(np.median(d[d >= 0.9 * np.max(d)]))  # robust "fully opaque" level
-        # When the element is faint its size estimate is noisy: use the size from the nearest frame
-        # with a solid signal instead.
-        solid = np.nonzero(np.isfinite(size) & (m0 >= 0.05 * peak))[0]
-        if len(solid):
-            near = solid[np.clip(np.searchsorted(solid, np.arange(len(m0))), 0, len(solid) - 1)]
-            prev = solid[np.clip(np.searchsorted(solid, np.arange(len(m0))) - 1, 0, len(solid) - 1)]
-            pick = np.where(np.abs(prev - np.arange(len(m0))) < np.abs(near - np.arange(len(m0))), prev, near)
-            size_for_op = np.where(m0 >= 0.05 * peak, size, size[pick])
-        else:
-            size_for_op = size
-        with np.errstate(divide="ignore", invalid="ignore"):
-            opacity = np.clip(m0, 0, None) / (ref * size_for_op**2)
-        opacity = np.where(np.isfinite(opacity), opacity, 0.0)
+        fill = m0[strong] / (core[strong] * width[strong] * height[strong])
+    fill = float(np.median(fill)) if strong.any() else 0.0
+    if core_ref >= SOLID_CORE and fill >= SOLID_FILL:
+        opacity = core / core_ref
     else:
-        opacity = np.zeros_like(m0)
-    return {"x": x, "y": y, "scale": scale, "opacity": opacity, "size_px": size}
+        opacity = _opacity_from_mass(m0, size, idx, peak)
+    return {"x": x, "y": y, "scale": scale, "opacity": opacity, "size_px": size,
+            "width_px": width, "height_px": height}
 
 
 def _rigid_scaled(sa: dict, sb: dict, ma: np.ndarray, mb: np.ndarray) -> bool:
@@ -162,7 +208,7 @@ def merge_components(moms: list[np.ndarray], comps: list[Component], bg: np.ndar
         return max(g, key=lambda i: norms[i])
 
     def moments(g, ref):
-        return sum(moms[i] * (norms[i] / norms[ref]) for i in g)
+        return combine([(moms[i], norms[i] / norms[ref]) for i in g])
 
     def parallel(i, j):
         # Loose: thin text strokes lose chroma to 4:2:0 subsampling, so colour estimates of the same

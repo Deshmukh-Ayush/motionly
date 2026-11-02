@@ -15,6 +15,7 @@ from motionly_engine.fit.select import select, tween_dict
 from motionly_engine.measure import PROPS, ElementSignals, Signals
 
 MIN_OPACITY = 0.1  # x / y / scale are unreliable when the element is nearly invisible
+LOW_CONF_PX = 16  # tweens on elements smaller than this (min of width, height) get confidence "low"
 SIGMA_FLOOR = {"x": 0.01, "y": 0.01, "scale": 1e-4, "opacity": 1e-3}
 
 
@@ -54,6 +55,15 @@ def fit_element(el: ElementSignals, ts: np.ndarray, width: int, height: int, fra
         if ok.sum() < 4:
             continue
         tweens += fit_signal(ts[ok], v[ok], w[ok], prop, change_floor(prop, width, height), frame)
+    # Small elements: compression and edge blur bias their measurements.
+    extent = np.fmin(el.signals.get("width_px", np.full_like(ts, np.nan)),
+                     el.signals.get("height_px", np.full_like(ts, np.nan)))
+    for tw in tweens:
+        sel = (ts >= tw["start_s"]) & (ts <= tw["start_s"] + tw["duration_s"]) & np.isfinite(extent)
+        px = float(np.median(extent[sel])) if sel.any() else float("nan")
+        tw["min_extent_px"] = None if not np.isfinite(px) else round(px, 1)
+        if np.isfinite(px) and px < LOW_CONF_PX:
+            tw["confidence"] = "low"
     return sorted(tweens, key=lambda d: (d["start_s"], d["prop"]))
 
 

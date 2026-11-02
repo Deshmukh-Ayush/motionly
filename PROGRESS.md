@@ -88,6 +88,7 @@ Failure types (fixes proposed, not applied, awaiting approval):
 | M5 baseline (old 1% start/end metric) | 73.2% | 76.5% | 63.8% | 6.7% | 6 | – |
 | A: metric + unobservable + fixed-noise BIC | 84.9% | 77.6% | 60.3% | 6.7% | 3 | 4 |
 | B: visibility + element joining | 95.5% | 86.5% | 65.7% | 7.2% | 0 | 4 |
+| C: fit starts/caps/end check + core opacity + low-confidence flag | 94.8% | 85.8% | 64.3% | 7.2% | 0 | 4 |
 
 - Batch A: CLAUDE.md timing target is now 5% start / 50% midpoint / 95% end (end = settles within 5%),
   each within 1 frame; 1% times kept in timeline.json. Moves with opacity < 0.1 for over half their
@@ -117,6 +118,25 @@ Failure types (fixes proposed, not applied, awaiting approval):
     - 3 small scale changes (1.4–2.7%) on shapes during their opacity tween.
   - Stagger detection 4 / 11 (was 6 / 11).
 
+- Batch C:
+  - Fitting:
+    - Named eases get a second start aligned by crossings found from the end; the bezier and the
+      spring get more starts (generic shapes, best named timing, a wider ζ grid).
+    - Duration is capped at the data window.
+    - Fits whose 1% start / end fall outside the window (±2 frames), or whose end value misses the
+      following hold (> 3σ and > 3% of the move), are rejected unless every candidate fails.
+  - Opacity:
+    - Filled shapes (fill = mass / (core × width × height) ≥ 0.6) use the solid core: the 90th
+      percentile weight, normalised to its fully-opaque level.
+    - Thin shapes (text) keep the mass-based estimate.
+    - The per-frame pixel extent is now in signals.json (`width_px`, `height_px`).
+  - Tweens on elements under 16 px (median min(width, height) during the move) get confidence
+    `low`; none in this set.
+  - Net effect is about neutral:
+    - Extra starts / caps fixed 5 trajectories and broke 4.
+    - Core opacity broke 4 opacity timings (fade-outs).
+    - Stagger detection went from 4 / 11 to 6 / 11.
+
 ## Next
 
-- Batch C, then the seed-2 holdout.
+- Seed-2 holdout (40 clips, CRF 26), no changes.

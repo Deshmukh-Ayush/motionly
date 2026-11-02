@@ -19,6 +19,8 @@ NAMED_MARGIN = 2.0
 
 
 def select(cands: list[Candidate]) -> Candidate:
+    # Fits that run past the data window or miss the following hold are rejected (unless all do).
+    cands = [c for c in cands if c.valid] or cands
     best = min(cands, key=lambda c: c.bic)
     named = [
         c for c in cands

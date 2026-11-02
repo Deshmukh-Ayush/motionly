@@ -17,7 +17,7 @@ from motionly_engine.fit import easing
 
 CSS_NAMES = ("ease", "ease-in", "ease-out", "ease-in-out")
 NAMED = tuple(easing.EXACT) + CSS_NAMES
-ZETAS = (0.2, 0.35, 0.5, 0.7, 0.9, 1.0, 1.3)
+ZETAS = (0.12, 0.2, 0.28, 0.35, 0.5, 0.7, 0.9, 1.0, 1.3)
 _U = np.linspace(0.0, 1.0, 4001)
 
 
@@ -39,11 +39,26 @@ def _first_cross(u: np.ndarray, p: np.ndarray, level: float) -> float | None:
     return float(u[j - 1] + (level - a) / (b - a) * (u[j] - u[j - 1]))
 
 
+def _last_cross(u: np.ndarray, p: np.ndarray, level: float) -> float | None:
+    below = np.nonzero(p < level)[0]
+    if len(below) == 0 or below[-1] + 1 >= len(p):
+        return None
+    j = below[-1] + 1
+    a, b = p[j - 1], p[j]
+    return float(u[j - 1] + (level - a) / (b - a) * (u[j] - u[j - 1]))
+
+
 def _crossings(u, p):
     return tuple(_first_cross(u, p, lv) for lv in (0.1, 0.5, 0.9))
 
 
+def _crossings_last(u, p):
+    """Crossings found from the end (differ from the first ones for overshoot or noisy data)."""
+    return tuple(_last_cross(u, p, lv) for lv in (0.1, 0.5, 0.9))
+
+
 _NAMED_X = {n: _crossings(_U, np.asarray(named_curve(n)(_U))) for n in NAMED}
+_NAMED_XL = {n: _crossings_last(_U, np.asarray(named_curve(n)(_U))) for n in NAMED}
 _TS = np.linspace(0, 60, 24001)
 _SPRING_X = {z: _crossings(_TS, np.asarray(easing.spring(_TS, 1.0, 2 * z))) for z in ZETAS}
 
@@ -56,6 +71,7 @@ class Candidate:
     rss: float
     n: int
     sigma: float  # per-sample noise of the signal, estimated from its holds
+    valid: bool = True  # inside the data window and consistent with the following hold
 
     @property
     def k(self) -> int:
@@ -155,8 +171,8 @@ def _fit(kind, name, d: MoveData, x0, lb, ub) -> Candidate:
     return Candidate(kind, name, r.x, rss, len(d.t), d.sigma)
 
 
-def _named_init(name, d, f0, f1, cross, fallback):
-    ux = _NAMED_X[name]
+def _named_init(name, d, f0, f1, cross, fallback, ux=None):
+    ux = ux or _NAMED_X[name]
     if cross and None not in cross and None not in ux and ux[2] - ux[0] > 1e-6:
         dur = (cross[2] - cross[0]) / (ux[2] - ux[0])
         if dur > 0:
@@ -164,18 +180,49 @@ def _named_init(name, d, f0, f1, cross, fallback):
     return [fallback[0], fallback[1], f0, f1]
 
 
+def _check(c: Candidate, d: MoveData) -> Candidate:
+    """Reject fits that run past the data window or end away from the following hold."""
+    from motionly_engine.fit.visual import visual_times
+
+    t_lo, t_hi = float(d.t[0]), float(d.t[-1])
+    try:
+        vs, ve = visual_times(c.progress, c.start, min(c.duration, 60.0), step=1e-3)
+    except ValueError:
+        c.valid = False
+        return c
+    ok = vs >= t_lo - 2 * d.frame and ve <= t_hi + 2 * d.frame
+    post = d.v[d.i1 + 1:]
+    if ok and len(post) >= 3:
+        hold = float(np.median(post[-3:]))
+        ok = abs(c.to - hold) <= max(3 * d.sigma, 0.03 * abs(c.to - c.from_))
+    c.valid = bool(ok)
+    return c
+
+
 def fit_candidates(d: MoveData) -> list[Candidate]:
     f0, f1 = _levels(d)
     cross = _data_crossings(d, f0, f1)
+    a = max(d.i0 - 1, 0)
+    cross_last = _crossings_last(d.t[a:], (d.v[a:] - f0) / (f1 - f0)) if abs(f1 - f0) > 1e-12 else None
     t_lo, t_hi = float(d.t[0]), float(d.t[-1])
     span = t_hi - t_lo
     fb_start = float(d.t[max(d.i0 - 1, 0)])
     fb = (fb_start, max(float(d.t[min(d.i1 + 1, len(d.t) - 1)]) - fb_start, 2 * d.frame))
     big = np.inf
+    # Duration capped at the data window (+2 frames): a move can't be longer than the data shows.
     lb4 = [t_lo - span - 1, 0.5 * d.frame, -big, -big]
-    ub4 = [t_hi, 4 * span + 1, big, big]
+    ub4 = [t_hi, span + 2 * d.frame, big, big]
 
-    cands = [_fit("named", n, d, _named_init(n, d, f0, f1, cross, fb), lb4, ub4) for n in NAMED]
+    cands = []
+    for n in NAMED:
+        # Two starts: align by the first crossings and by the crossings found from the end
+        # (they differ for overshooting eases and noisy data).
+        c = _fit("named", n, d, _named_init(n, d, f0, f1, cross, fb), lb4, ub4)
+        if cross_last and None not in cross_last and _NAMED_XL[n] and None not in _NAMED_XL[n]:
+            c2 = _fit("named", n, d, _named_init(n, d, f0, f1, cross_last, fb, _NAMED_XL[n]), lb4, ub4)
+            if c2.rss < c.rss:
+                c = c2
+        cands.append(c)
 
     # Free bezier: start from the best named fits that have a bezier form, plus a generic one.
     ranked = sorted(cands, key=lambda c: c.rss)
@@ -183,7 +230,8 @@ def fit_candidates(d: MoveData) -> list[Candidate]:
     for c in ranked:
         if c.name in easing.PRESETS and len(starts) < 3:
             starts.append(list(c.x[:4]) + list(easing.PRESETS[c.name]))
-    starts.append(list(ranked[0].x[:4]) + [0.25, 0.1, 0.25, 1.0])
+    for generic in ([0.25, 0.1, 0.25, 1.0], [0.5, 0.0, 0.75, 0.0], [0.25, 1.0, 0.5, 1.0], [0.4, 0.0, 0.2, 1.0]):
+        starts.append(list(ranked[0].x[:4]) + generic)
     lb8, ub8 = lb4 + [0, -1, 0, -1], ub4 + [1, 2, 1, 2]
     bez = [_fit("bezier", None, d, s, lb8, ub8) for s in starts]
     best_bez = min(bez, key=lambda c: c.rss)
@@ -208,10 +256,13 @@ def fit_candidates(d: MoveData) -> list[Candidate]:
                 continue
             w0 = (tx[2] - tx[0]) / (cross[2] - cross[0])
             springs.append([cross[0] - tx[0] / w0, f0, f1, w0, z])
+    best_named = min((c for c in cands if c.kind == "named"), key=lambda c: c.rss)
+    for z in (0.3, 0.6):  # timing taken from the best named fit
+        springs.append([best_named.start, best_named.from_, best_named.to, 4.0 / max(best_named.duration * z, 1e-3), z])
     if not springs:
         springs.append([fb[0], f0, f1, 10.0, 0.7])
-    lb5 = [t_lo - span - 1, -big, -big, 0.5, 0.05]
+    lb5 = [t_lo - span - 1, -big, -big, 2.0, 0.05]
     ub5 = [t_hi, big, big, 200.0, 3.0]
     sp = [_fit("spring", None, d, s, lb5, ub5) for s in springs]
     cands.append(min(sp, key=lambda c: c.rss))
-    return cands
+    return [_check(c, d) for c in cands]

@@ -34,6 +34,8 @@ class ElementSignals:
             "id": self.id, "region_bbox": list(self.bbox), "color": [round(c, 2) for c in self.color],
             "signals": {p: _nan_to_none(self.signals[p]) for p in PROPS},
             "size_px": _nan_to_none(self.signals["size_px"]),
+            "width_px": _nan_to_none(self.signals["width_px"]),
+            "height_px": _nan_to_none(self.signals["height_px"]),
             "mass": _nan_to_none(self.mass),
         }
 
@@ -43,7 +45,8 @@ class ElementSignals:
             return np.array([np.nan if x is None else x for x in v], dtype=float)
 
         sig = {p: arr(d["signals"][p]) for p in PROPS}
-        sig["size_px"] = arr(d["size_px"])
+        for k in ("size_px", "width_px", "height_px"):
+            sig[k] = arr(d[k]) if k in d else np.full(len(d["mass"]), np.nan)
         return cls(d["id"], tuple(d["region_bbox"]), d["color"], sig, arr(d["mass"]))
 
 
