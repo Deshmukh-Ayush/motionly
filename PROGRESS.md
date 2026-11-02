@@ -53,6 +53,34 @@ Reference repo (gitignored): `git clone https://github.com/sidart10/rem referenc
     stagger step 0.182 s exact.
   - x / y / scale samples are ignored when the element's mass is < 30% of its peak (near-invisible).
 
+- **M5 Benchmark**: `benchmark/`: element match by slot, tween match by visual-window overlap, metrics
+  per the CLAUDE.md table (timing ±1 frame, normalised-progress trajectory ≤ 3%, named ease or curve
+  distance ≤ 0.03, spurious rate) plus missed, value error, stagger detection; breakdowns by ease
+  family / prop / duration / resolution / shape. CLI: `motionly benchmark --gt data/gt`.
+
+### Latest benchmark (engine 0.1.0, 40 clips, seed 1, mixed 960×540 / 1920×1080, 30 fps)
+
+| Metric | Target | CRF 26 | CRF 28 |
+|---|---|---:|---:|
+| Visual start and end within 1 frame | ≥ 90% | 73.2% | 73.9% |
+| Trajectory error ≤ 3% | ≥ 90% | 76.5% | 76.5% |
+| Named ease correct or dist ≤ 0.03 | ≥ 85% | 63.8% | 63.8% |
+| Spurious tweens | ≤ 5% | 6.7% | 8.4% |
+| Missed (diagnostic) | – | 6 / 159 | 6 / 159 |
+
+1920×1080 is much better than 960×540 (CRF 26 timing 83% vs 63%, trajectory 84% vs 68%).
+Reports: `data/runs/bench_gt_crf26/report.md`, `data/runs/bench_gt_crf28/report.md`.
+
+Failure types (fixes proposed, not applied, awaiting approval):
+1. Elements split into several measured elements (fast movers whose hand-off happens at low opacity;
+   scaled text whose glyphs no longer move identically) → most spurious tweens + partial moves.
+2. x / y / scale gated on mass relative to peak, which conflates small scale with low opacity → missed
+   and truncated moves.
+3. Free bezier beats the correct exact / CSS name on BIC because measurement error is not white noise.
+4. Scale / opacity measurement bias on small elements at 960×540.
+5. End time on slow ease-out tails is very sensitive to sub-1% progress error (metric conditioning).
+- Truth-set note: 3 of 159 truth tweens move while the element is (nearly) invisible.
+
 ## Next
 
-- M5: benchmark.
+- Decide on the M5 fixes, then re-run both benchmarks.
