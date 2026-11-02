@@ -4,8 +4,8 @@ import json
 import pytest
 
 from motionly_engine.benchmark.match import match_clip
-from motionly_engine.benchmark.metrics import summarize, target_rows, tween_metrics
-from motionly_engine.generate.scene import Ease, Tween
+from motionly_engine.benchmark.metrics import summarize, target_rows, timing_points, tween_metrics, unobservable
+from motionly_engine.generate.scene import Ease, Element, Tween
 
 FPS = 30
 
@@ -93,6 +93,30 @@ def test_end_to_end_small(tmp_path):
     res = run_benchmark(gt, tmp_path / "run")
     assert (tmp_path / "run" / "report.md").read_text().startswith("# Benchmark")
     s = res["summary"]
-    assert s["matched"] + s["missed"] == sum(
+    assert s["matched"] + s["missed"] + s["unobservable"] == sum(
         len(e["tweens"]) for i in range(2) for e in json.loads((gt / f"clip_{i:03d}.json").read_text())["elements"])
     assert s["matched"] > 0
+
+
+def test_timing_points_linear_and_overshoot():
+    tt = _truth_tween(ease=Ease("named", name="linear"), start=1.0, dur=2.0)
+    t5, t50, t95 = timing_points(tt)
+    assert t5 == pytest.approx(1.1, abs=2e-4) and t50 == pytest.approx(2.0, abs=2e-4)
+    assert t95 == pytest.approx(2.9, abs=2e-4)
+    back = _truth_tween(ease=Ease("named", name="easeOutBack"), start=0.0, dur=1.0)
+    _, b50, b95 = timing_points(back)
+    assert b95 > b50  # settles within 5% only after the overshoot comes back
+
+
+def test_one_frame_shift_passes_timing():
+    tt = _truth_tween()
+    assert tween_metrics(tt, _as_measured(tt, 0.9 / FPS), FPS, "circle")["timing_ok"]
+
+
+def test_unobservable_rule():
+    fade = Tween("opacity", 1.0, 0.0, 0.0, 0.5, Ease("named", name="linear"))
+    move = Tween("x", 0.0, 100.0, 0.6, 0.5, Ease("named", name="linear"))
+    el = Element(id="el0", shape="circle", color=(255, 255, 255), size=(10.0, 10.0), slot=(0, 0, 200, 200),
+                 rest={"y": 50.0, "scale": 1.0, "opacity": 1.0}, tweens=[fade, move])
+    assert unobservable(el, move.to_dict())  # moves after the element has faded out
+    assert not unobservable(el, fade.to_dict())  # opacity < 0.1 only for the last ~10% of the fade

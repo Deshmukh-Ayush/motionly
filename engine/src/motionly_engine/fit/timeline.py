@@ -10,7 +10,7 @@ import numpy as np
 from motionly_engine import __version__
 from motionly_engine.fit.group import find_groups
 from motionly_engine.fit.models import MoveData, fit_candidates
-from motionly_engine.fit.segment import find_moves
+from motionly_engine.fit.segment import find_moves, noise_sigma
 from motionly_engine.fit.select import select, tween_dict
 from motionly_engine.measure import PROPS, ElementSignals, Signals
 
@@ -25,9 +25,10 @@ def change_floor(prop: str, width: int, height: int) -> float:
 def fit_signal(t: np.ndarray, v: np.ndarray, w: np.ndarray, prop: str, floor: float, frame: float) -> list[dict]:
     """t, v, w: valid samples of one signal. Returns tween dicts."""
     out = []
+    sigma = max(noise_sigma(v), SIGMA_FLOOR[prop])
     for mv in find_moves(t, v, floor, SIGMA_FLOOR[prop]):
         sl = slice(mv.w0, mv.w1 + 1)
-        d = MoveData(t[sl], v[sl], w[sl], mv.i0 - mv.w0, mv.i1 - mv.w0, frame)
+        d = MoveData(t[sl], v[sl], w[sl], mv.i0 - mv.w0, mv.i1 - mv.w0, frame, sigma)
         cands = fit_candidates(d)
         out.append(tween_dict(prop, select(cands), cands, d.t, d.v))
     return out

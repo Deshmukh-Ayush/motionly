@@ -1,4 +1,11 @@
-"""Choose the ease for a move: lowest BIC, preferring a named ease within 2 BIC points."""
+"""Choose the ease for a move.
+
+BIC uses the noise level measured on the signal's holds (RSS / sigma^2 + k ln n). Pick the lowest BIC,
+but prefer a named ease when it is within 2 BIC points of the best, or when naming costs no more than
+the noise (extra mean squared residual per sample <= sigma^2). Measurement error on real pixels is not
+white noise, so a free bezier can always shave a little residual off; a name within noise is more
+useful in build notes.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +20,11 @@ NAMED_MARGIN = 2.0
 
 def select(cands: list[Candidate]) -> Candidate:
     best = min(cands, key=lambda c: c.bic)
-    named = [c for c in cands if c.kind == "named" and c.bic <= best.bic + NAMED_MARGIN]
+    named = [
+        c for c in cands
+        if c.kind == "named"
+        and (c.bic <= best.bic + NAMED_MARGIN or (c.rss - best.rss) / c.n <= c.sigma * c.sigma)
+    ]
     return min(named, key=lambda c: c.bic) if named else best
 
 

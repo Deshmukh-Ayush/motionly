@@ -74,12 +74,12 @@ Measured on the ground-truth benchmark: 30 fps, H.264 CRF 26–28 (like an X upl
 
 | Metric | Target |
 |---|---|
-| Visual start and end time | within 1 frame on ≥ 90% of tweens |
+| Timing: 5% start, 50% midpoint and 95% end times | each within 1 frame on ≥ 90% of tweens |
 | Trajectory error (max progress difference vs truth) | ≤ 3% of the move on ≥ 90% of tweens |
 | Named ease correct, or curve distance ≤ 0.03 | ≥ 85% of named-ease tweens |
 | Spurious tweens (detected but not in truth) | ≤ 5% |
 
-"Visual start/end" = when the move passes 1% of its change and when it settles within 1%. Compare these instead of raw durations, because long ease-out tails make duration ambiguous.
+Timing points: "start" = when the move first passes 5% of its change, "midpoint" = when it first reaches 50%, "end" = when it settles within 5% of its final value (95% of the change). Compare these instead of raw durations or 1% times, because long ease-out tails make both ambiguous. `timeline.json` still reports the 1% times (`visual_start_s`, `visual_end_s`) for reference. Moves where the element's opacity is below 0.1 for more than half the move are "unobservable": they are excluded from all scores and listed separately.
 
 ## Rules
 

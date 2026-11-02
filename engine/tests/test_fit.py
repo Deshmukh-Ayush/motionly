@@ -142,3 +142,18 @@ def test_fit_clip_end_to_end(tmp_path):
             assert t["confidence"] == "measured"
             assert {"type", "nearest", "nearest_dist"} <= set(t["ease"])
     json.dumps(tl)
+
+
+def test_select_prefers_named_within_noise():
+    import numpy as np
+
+    from motionly_engine.fit.models import Candidate
+    from motionly_engine.fit.select import select
+
+    n, sigma = 60, 0.5
+    bez = Candidate("bezier", None, np.zeros(8), rss=10.0, n=n, sigma=sigma)
+    # Named costs 0.2 more mean squared residual per sample than the bezier: within noise (0.25).
+    named = Candidate("named", "easeOutCubic", np.zeros(4), rss=10.0 + 0.2 * n, n=n, sigma=sigma)
+    assert select([bez, named]).name == "easeOutCubic"
+    worse = Candidate("named", "linear", np.zeros(4), rss=10.0 + 2.0 * n, n=n, sigma=sigma)
+    assert select([bez, worse]).kind == "bezier"

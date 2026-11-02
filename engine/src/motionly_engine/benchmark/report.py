@@ -31,8 +31,8 @@ def breakdown(rows: list[dict], key: str, missed: list[dict], spurious_by: dict 
         k = m.get(key)
         if k is not None:
             miss[k] += 1
-    lines = [f"| {key.replace('_', ' ')} | n | timing ok | trajectory ok | named ok | median |Δstart| (fr) | median |Δend| (fr) | missed |",
-             "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    lines = [f"| {key.replace('_', ' ')} | n | timing ok | trajectory ok | named ok | med |Δ5%| (fr) | med |Δ50%| (fr) | med |Δ95%| (fr) | missed |",
+             "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for k in sorted(groups, key=str):
         g = groups[k]
         named = [r for r in g if r["named"]]
@@ -40,8 +40,9 @@ def breakdown(rows: list[dict], key: str, missed: list[dict], spurious_by: dict 
         lines.append(
             f"| {k} | {len(g)} | {_pct(np.mean([r['timing_ok'] for r in g]))} | "
             f"{_pct(np.mean([r['trajectory_ok'] for r in g]))} | {nm} | "
-            f"{np.median([abs(r['start_err_frames']) for r in g]):.2f} | "
-            f"{np.median([abs(r['end_err_frames']) for r in g]):.2f} | {miss.get(k, 0)} |")
+            f"{np.median([abs(r['t5_err_frames']) for r in g]):.2f} | "
+            f"{np.median([abs(r['t50_err_frames']) for r in g]):.2f} | "
+            f"{np.median([abs(r['t95_err_frames']) for r in g]):.2f} | {miss.get(k, 0)} |")
     return lines
 
 
@@ -52,6 +53,7 @@ def write_report(res: dict, path: Path) -> None:
          f"size {man['size']}, {man['fps']} fps, CRF {man['crf']})",
          f"- tweens: {s['matched']} matched, {s['missed']} missed ({_pct(s['missed_rate'])} of truth), "
          f"{s['spurious']} spurious of {s['measured']} measured",
+         f"- unobservable (opacity < 0.1 for over half the move, excluded from all scores): {s.get('unobservable', 0)}",
          f"- stagger groups detected (same elements, step within 1 frame): {s['stagger_detected']} / {s['stagger_total']}",
          f"- run time {res['elapsed_s']:.0f} s", "",
          "## Targets (CLAUDE.md)", "", "| Metric | Value | Target | |", "|---|---:|---:|---|"]
@@ -69,11 +71,12 @@ def write_report(res: dict, path: Path) -> None:
         L += [f"## By {title.lower()}", ""] + breakdown(rows, key, missed) + [""]
 
     L += ["## Worst 15 tweens (by trajectory error)", "",
-          "| clip | el | prop | truth ease | measured ease | Δstart (fr) | Δend (fr) | traj err | ease dist |",
-          "|---|---|---|---|---|---:|---:|---:|---:|"]
+          "| clip | el | prop | truth ease | measured ease | Δ5% (fr) | Δ50% (fr) | Δ95% (fr) | traj err | ease dist |",
+          "|---|---|---|---|---|---:|---:|---:|---:|---:|"]
     for r in sorted(rows, key=lambda r: -r["trajectory_err"])[:15]:
         L.append(f"| {r['clip']} | {r['truth_el']} ({r['shape']}) | {r['prop']} | {_ease_str(r['truth']['ease'])} | "
-                 f"{_ease_str(r['measured']['ease'])} | {r['start_err_frames']:+.2f} | {r['end_err_frames']:+.2f} | "
+                 f"{_ease_str(r['measured']['ease'])} | {r['t5_err_frames']:+.2f} | {r['t50_err_frames']:+.2f} | "
+                 f"{r['t95_err_frames']:+.2f} | "
                  f"{r['trajectory_err']:.3f} | {r['ease_dist']:.3f} |")
     L += ["", "## Spurious tweens", ""]
     if res["spurious"]:
@@ -91,6 +94,15 @@ def write_report(res: dict, path: Path) -> None:
             t = ms["tween"]
             L.append(f"| {ms['clip']} | {ms['truth_el']} ({ms['shape']}) | {t['prop']} | {t['from']:.3f} → {t['to']:.3f} | "
                      f"{t['start_s']:.2f} | {_ease_str(t['ease'])} |")
+    else:
+        L.append("None.")
+    L += ["", "## Unobservable tweens (excluded from scores)", ""]
+    if res.get("unobservable"):
+        L += ["| clip | el | prop | from → to | start | measured? |", "|---|---|---|---|---:|---|"]
+        for u in res["unobservable"]:
+            t = u["tween"]
+            L.append(f"| {u['clip']} | {u['truth_el']} ({u['shape']}) | {t['prop']} | {t['from']:.3f} → {t['to']:.3f} | "
+                     f"{t['start_s']:.2f} | {'yes' if u['measured'] else 'no'} |")
     else:
         L.append("None.")
     path.write_text("\n".join(L) + "\n")

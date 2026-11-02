@@ -55,6 +55,7 @@ class Candidate:
     x: np.ndarray
     rss: float
     n: int
+    sigma: float  # per-sample noise of the signal, estimated from its holds
 
     @property
     def k(self) -> int:
@@ -62,7 +63,8 @@ class Candidate:
 
     @property
     def bic(self) -> float:
-        return self.n * math.log(max(self.rss, 1e-12) / self.n) + self.k * math.log(self.n)
+        """BIC with the noise level fixed from the hold frames: RSS / sigma^2 + k ln n."""
+        return self.rss / (self.sigma * self.sigma) + self.k * math.log(self.n)
 
     @property
     def start(self) -> float:
@@ -125,6 +127,7 @@ class MoveData:
     i0: int  # first moving sample (within t / v)
     i1: int  # last moving sample
     frame: float  # frame interval, seconds
+    sigma: float = 1.0  # per-sample noise (prop units), from the signal's holds
 
 
 def _levels(d: MoveData) -> tuple[float, float]:
@@ -149,7 +152,7 @@ def _fit(kind, name, d: MoveData, x0, lb, ub) -> Candidate:
 
     r = least_squares(res, x0, bounds=(lb, ub), x_scale="jac", method="trf", max_nfev=400)
     rss = float(np.sum(res(r.x) ** 2))
-    return Candidate(kind, name, r.x, rss, len(d.t))
+    return Candidate(kind, name, r.x, rss, len(d.t), d.sigma)
 
 
 def _named_init(name, d, f0, f1, cross, fallback):
@@ -183,7 +186,19 @@ def fit_candidates(d: MoveData) -> list[Candidate]:
     starts.append(list(ranked[0].x[:4]) + [0.25, 0.1, 0.25, 1.0])
     lb8, ub8 = lb4 + [0, -1, 0, -1], ub4 + [1, 2, 1, 2]
     bez = [_fit("bezier", None, d, s, lb8, ub8) for s in starts]
-    cands.append(min(bez, key=lambda c: c.rss))
+    best_bez = min(bez, key=lambda c: c.rss)
+    cands.append(best_bez)
+
+    # Refit the named eases closest to the bezier's shape, starting from the bezier's timing:
+    # guards against a named fit stuck in a poor local minimum.
+    shape = easing.as_samples(best_bez.bezier_params)
+    near = sorted(NAMED, key=lambda n: float(np.max(np.abs(easing.as_samples(named_curve(n)) - shape))))[:6]
+    by_name = {c.name: i for i, c in enumerate(cands) if c.kind == "named"}
+    for n in near:
+        c = _fit("named", n, d, list(best_bez.x[:4]), lb4, ub4)
+        i = by_name[n]
+        if c.rss < cands[i].rss:
+            cands[i] = c
 
     # Spring: (start, from, to, omega0, zeta) from a zeta grid, omega0 matched to the 10-90% time.
     springs = []

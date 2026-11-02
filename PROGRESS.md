@@ -81,6 +81,22 @@ Failure types (fixes proposed, not applied, awaiting approval):
 5. End time on slow ease-out tails is very sensitive to sub-1% progress error (metric conditioning).
 - Truth-set note: 3 of 159 truth tweens move while the element is (nearly) invisible.
 
+### Fix batches (CRF 26, seed 1; timing column uses the new 5% / 50% / 95% metric from batch A on)
+
+| Run | Timing | Trajectory | Named | Spurious | Missed | Unobservable |
+|---|---:|---:|---:|---:|---:|---:|
+| M5 baseline (old 1% start/end metric) | 73.2% | 76.5% | 63.8% | 6.7% | 6 | – |
+| A: metric + unobservable + fixed-noise BIC | 84.9% | 77.6% | 60.3% | 6.7% | 3 | 4 |
+
+- Batch A: CLAUDE.md timing target is now 5% start / 50% midpoint / 95% end (end = settles within 5%),
+  each within 1 frame; 1% times kept in timeline.json. Moves with opacity < 0.1 for over half their
+  duration are unobservable (excluded, listed separately). Selection uses BIC with σ from the
+  signal's holds, prefers a named ease within 2 BIC or within σ² extra mean squared residual, and
+  refits the 6 named eases closest to the bezier from the bezier's timing.
+  - The named-ease score went down (63.8% → 60.3%): hold-frame σ is far smaller than the error
+    during motion, so RSS/σ² magnifies the bezier's small advantage. In 22 of the 27 failures the
+    correct name is the runner-up.
+
 ## Next
 
-- Decide on the M5 fixes, then re-run both benchmarks.
+- Batch B (visibility, element joining), then batch C, then the seed-2 holdout.
