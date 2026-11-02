@@ -1,0 +1,22 @@
+# Data and secrets
+data/
+.env
+
+# Reference repos (own .git; re-clone per PROGRESS.md)
+reference/
+
+# Windows download metadata
+*:Zone.Identifier
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Web (later)
+node_modules/
+.next/
