@@ -94,8 +94,8 @@ Failure types (fixes proposed, not applied, awaiting approval):
   signal's holds, prefers a named ease within 2 BIC or within σ² extra mean squared residual, and
   refits the 6 named eases closest to the bezier from the bezier's timing.
   - The named-ease score went down (63.8% → 60.3%): hold-frame σ is far smaller than the error
-    during motion, so RSS/σ² magnifies the bezier's small advantage. In 22 of the 27 failures the
-    correct name is the runner-up.
+    during motion, so RSS/σ² magnifies the bezier's small advantage. 26 of the 27 failures were
+    reported as a free bezier; in 16 the correct name was the runner-up.
 
 ## Next
 
