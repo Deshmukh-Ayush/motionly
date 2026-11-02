@@ -144,7 +144,7 @@ def test_fit_clip_end_to_end(tmp_path):
     json.dumps(tl)
 
 
-def test_select_prefers_named_within_noise():
+def test_select_named_within_two_bic():
     import numpy as np
 
     from motionly_engine.fit.models import Candidate
@@ -152,10 +152,11 @@ def test_select_prefers_named_within_noise():
 
     n, sigma = 60, 0.5
     bez = Candidate("bezier", None, np.zeros(8), rss=10.0, n=n, sigma=sigma)
-    # Named costs 0.2 more mean squared residual per sample than the bezier: within noise (0.25).
-    named = Candidate("named", "easeOutCubic", np.zeros(4), rss=10.0 + 0.2 * n, n=n, sigma=sigma)
+    # BIC: bezier 10/0.25 + 8 ln 60 = 72.8; named with RSS 13 -> 52 + 4 ln 60 = 68.4 (better).
+    named = Candidate("named", "easeOutCubic", np.zeros(4), rss=13.0, n=n, sigma=sigma)
     assert select([bez, named]).name == "easeOutCubic"
-    worse = Candidate("named", "linear", np.zeros(4), rss=10.0 + 2.0 * n, n=n, sigma=sigma)
+    # Named with RSS 20 -> 80 + 16.4 = 96.4: more than 2 worse than the bezier.
+    worse = Candidate("named", "linear", np.zeros(4), rss=20.0, n=n, sigma=sigma)
     assert select([bez, worse]).kind == "bezier"
 
 
@@ -188,3 +189,21 @@ def test_low_confidence_for_small_elements():
         tws = fit_element(el, T, 960, 540, FRAME)
         assert [t["prop"] for t in tws] == ["x"]
         assert tws[0]["confidence"] == conf
+
+
+def test_tweens_on_faint_elements_dropped():
+    from motionly_engine.fit.timeline import fit_element
+    from motionly_engine.measure import ElementSignals
+
+    tw = Tween("x", 100.0, 300.0, 0.5, 0.8, Ease("named", name="easeOutCubic"))
+    rng = np.random.default_rng(4)
+    n = len(T)
+    sig = {"x": tw.value_at(T) + rng.normal(0, 0.2, n), "y": np.full(n, 50.0), "scale": np.ones(n),
+           "size_px": np.full(n, 10.0), "width_px": np.full(n, 40.0), "height_px": np.full(n, 40.0)}
+    # Opacity 0.11 keeps x usable but stays faint; mark most of the move below 0.1.
+    op = np.full(n, 1.0)
+    op[(T > 0.45) & (T < 1.2)] = 0.11
+    op[(T > 0.6) & (T < 1.2)] = 0.05
+    sig["opacity"] = op
+    el = ElementSignals("el0", (0, 0, 400, 100), [255, 255, 255], dict(sig), np.full(n, 100.0))
+    assert [t["prop"] for t in fit_element(el, T, 960, 540, FRAME) if t["prop"] == "x"] == []

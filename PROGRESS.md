@@ -150,6 +150,30 @@ Failure types (fixes proposed, not applied, awaiting approval):
   was reported as a free bezier (25 / 25 and 13 / 13), so the remaining gap is selection, not fitting.
 - Reports: `data/runs/bench_gt_crf26_C/report.md`, `data/runs/bench_gt_seed2/report.md`.
 
+### Batch D (engine 0.2.0)
+
+| Set | Timing | Trajectory | Named | Spurious | Missed | Unobservable | Stagger |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| seed 1, after C | 94.8% | 85.8% | 64.3% | 7.2% | 0 | 4 | 6 / 11 |
+| seed 1, after D | 96.1% | 87.7% | 77.1% | 4.3% | 0 | 4 | 8 / 11 |
+| seed 2, after C | 96.2% | 90.2% | 78.0% | 6.3% | 0 | 3 | 13 / 16 |
+| seed 2, after D | 94.7% | 91.7% | 83.1% | 5.7% | 0 | 3 | 11 / 16 |
+
+- Naming: BIC noise level = the free bezier's residual RMS within the move window (hold-frame σ
+  underestimated the error during motion); named preferred within 2 BIC. Former bezier picks that
+  became named: seed 1 18 of 100 (15 on named-truth tweens, 13 of them correct; 3 on custom-bezier /
+  spring truth), seed 2 11 of 74 (10 on named truth, all correct; 1 on other truth).
+- Spurious: measured tweens with opacity < 0.1 for over half the move are dropped (mirror of the
+  truth rule). Parts of one element are compared only on frames where each has ≥ 50% of its peak
+  mass, and may differ in visibility by one frame, so pieces that only separate while faint merge
+  (clip_025 now 3 elements = truth).
+- Opacity: template method. The element's appearance at a full-opacity, low-motion frame is warped
+  to each frame's measured position and scale; alpha = least squares on both after a 5×5 Gaussian
+  blur (plain least squares had up to 0.155 error on fast thin text, blurred 0.065). Elements with
+  no frame at opacity ≥ 0.9 keep the previous estimate. Two extra decode passes per clip. Test
+  tolerance for text opacity raised from 0.05 to 0.07 (shapes stay 0.05).
+- engine_version 0.2.0: cached signals from 0.1.0 are never reused.
+
 ## Next
 
-- Waiting for review of the holdout before more changes.
+- Remaining gaps: named eases (77% / 83% vs 85%), seed-1 trajectory (88%), seed-2 spurious (5.7%).

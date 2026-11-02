@@ -1,6 +1,6 @@
 [project]
 name = "motionly-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Motionly engine: measure timing and easing from motion graphics videos"
 requires-python = ">=3.11"
 dependencies = [

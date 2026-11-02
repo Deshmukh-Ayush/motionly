@@ -55,6 +55,15 @@ def fit_element(el: ElementSignals, ts: np.ndarray, width: int, height: int, fra
         if ok.sum() < 4:
             continue
         tweens += fit_signal(ts[ok], v[ok], w[ok], prop, change_floor(prop, width, height), frame)
+    # Unobservable moves (mirror of the benchmark's truth rule): drop tweens during which the element's
+    # opacity is below 0.1 for more than half the move; what is measured there is mostly noise.
+    kept = []
+    for tw in tweens:
+        sel = (ts >= tw["start_s"]) & (ts <= tw["start_s"] + tw["duration_s"])
+        if sel.sum() >= 2 and np.mean(op[sel] < MIN_OPACITY) > 0.5:
+            continue
+        kept.append(tw)
+    tweens = kept
     # Small elements: compression and edge blur bias their measurements.
     extent = np.fmin(el.signals.get("width_px", np.full_like(ts, np.nan)),
                      el.signals.get("height_px", np.full_like(ts, np.nan)))

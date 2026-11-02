@@ -144,15 +144,20 @@ def signals_from_moments(mom: np.ndarray) -> dict[str, np.ndarray]:
             "width_px": width, "height_px": height}
 
 
+STRONG = 0.5  # parts are compared only on frames where each has at least half its peak mass
+
+
 def _rigid_scaled(sa: dict, sb: dict, ma: np.ndarray, mb: np.ndarray) -> bool:
-    """Parts of one element: visible on the same frames and moving as one rigid body that translates
-    and scales about a shared centre (so the vector between them scales with their sizes), with a
-    constant mass ratio. Covers glyphs of static, moving and scaling text."""
-    va, vb = np.isfinite(sa["x"]), np.isfinite(sb["x"])
-    if va.sum() < 3 or np.any(va != vb):
+    """Parts of one element: clearly visible on the same frames and moving as one rigid body that
+    translates and scales about a shared centre (so the vector between them scales with their sizes),
+    with a constant mass ratio. Covers glyphs of static, moving and scaling text."""
+    # Judge only where the parts are clearly visible: while faint, one piece can drop below the
+    # visibility floor before the other, or its centroid gets noisy, which must not separate them.
+    strong_a = np.isfinite(sa["x"]) & (ma[:, 0] >= STRONG * np.max(ma[:, 0]))
+    strong_b = np.isfinite(sb["x"]) & (mb[:, 0] >= STRONG * np.max(mb[:, 0]))
+    if np.sum(strong_a != strong_b) > 1:  # allow one boundary frame
         return False
-    # Compare motion only where both parts are clearly visible (faint frames are noisy).
-    va = va & (ma[:, 0] >= 0.2 * np.max(ma[:, 0])) & (mb[:, 0] >= 0.2 * np.max(mb[:, 0]))
+    va = strong_a & strong_b
     if va.sum() < 3:
         return False
     ref = int(np.nonzero(va)[0][-1])

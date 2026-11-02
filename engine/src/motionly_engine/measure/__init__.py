@@ -28,6 +28,7 @@ class ElementSignals:
     color: list[float]
     signals: dict[str, np.ndarray]
     mass: np.ndarray
+    opacity_method: str = "core-or-mass"  # "template" when a full-opacity template was used
 
     def to_dict(self) -> dict:
         return {
@@ -37,6 +38,7 @@ class ElementSignals:
             "width_px": _nan_to_none(self.signals["width_px"]),
             "height_px": _nan_to_none(self.signals["height_px"]),
             "mass": _nan_to_none(self.mass),
+            "opacity_method": self.opacity_method,
         }
 
     @classmethod
@@ -47,7 +49,8 @@ class ElementSignals:
         sig = {p: arr(d["signals"][p]) for p in PROPS}
         for k in ("size_px", "width_px", "height_px"):
             sig[k] = arr(d[k]) if k in d else np.full(len(d["mass"]), np.nan)
-        return cls(d["id"], tuple(d["region_bbox"]), d["color"], sig, arr(d["mass"]))
+        return cls(d["id"], tuple(d["region_bbox"]), d["color"], sig, arr(d["mass"]),
+                   d.get("opacity_method", "core-or-mass"))
 
 
 @dataclass
@@ -125,4 +128,15 @@ def measure(clip: Path) -> Signals:
         x1 = max(comps[i].bbox[2] for i in group)
         y1 = max(comps[i].bbox[3] for i in group)
         elements.append(ElementSignals(f"el{gi}", (x0, y0, x1, y1), color.tolist(), sig, m[:, 0]))
+
+    # Pass 3: template opacity (two more decodes: grab the full-opacity frames, then solve alpha).
+    from motionly_engine.measure.template import capture_templates, plan, solve_alpha
+
+    plans = plan(elements, bg.color)
+    capture_templates(iter_frames(clip, info.width, info.height), plans, info.width, info.height)
+    solve_alpha(iter_frames(clip, info.width, info.height), plans, info.width, info.height, n)
+    for p in plans:
+        if p.alpha is not None:
+            p.el.signals["opacity"] = p.alpha
+            p.el.opacity_method = "template"
     return Signals(clip.stem, info.width, info.height, info.fps, info.timestamps, bg.color.tolist(), elements)

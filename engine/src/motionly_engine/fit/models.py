@@ -70,7 +70,7 @@ class Candidate:
     x: np.ndarray
     rss: float
     n: int
-    sigma: float  # per-sample noise of the signal, estimated from its holds
+    sigma: float  # noise level for BIC: the free bezier's residual RMS within the move window
     valid: bool = True  # inside the data window and consistent with the following hold
 
     @property
@@ -265,4 +265,11 @@ def fit_candidates(d: MoveData) -> list[Candidate]:
     ub5 = [t_hi, big, big, 200.0, 3.0]
     sp = [_fit("spring", None, d, s, lb5, ub5) for s in springs]
     cands.append(min(sp, key=lambda c: c.rss))
+    # Noise level for model comparison: the free bezier's residual variance inside this move's window.
+    # Hold frames underestimate it (measurement error grows while the element moves), which made a
+    # free bezier's small advantage look decisive.
+    bez = next(c for c in cands if c.kind == "bezier")
+    sigma_move = math.sqrt(max(bez.rss / max(bez.n - bez.k, 1), d.sigma * d.sigma, 1e-12))
+    for c in cands:
+        c.sigma = sigma_move
     return [_check(c, d) for c in cands]
