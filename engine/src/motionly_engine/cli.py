@@ -105,3 +105,28 @@ def measure(
         t, series, title, _ = truth_vs_measured(sig, Scene.from_dict(json.loads(truth.read_text())), element)
         png = plot_element(t, series, title, out / f"plot_el{element}.png")
         typer.echo(f"plot -> {png}")
+
+
+@app.command()
+def fit(
+    clip: Path = typer.Argument(..., exists=True, help="Video file."),
+    out: Path = typer.Option(None, help="Output dir (default data/runs/<clip-stem>)."),
+    fresh: bool = typer.Option(False, help="Re-measure even if signals.json exists."),
+) -> None:
+    """Measure + fit tweens; writes timeline.json."""
+    import time
+
+    from motionly_engine.fit.timeline import fit_clip
+
+    t0 = time.time()
+    out = out or Path("data/runs") / clip.stem
+    out.mkdir(parents=True, exist_ok=True)
+    tl = fit_clip(clip, out, reuse=not fresh)
+    n_tw = sum(len(e["tweens"]) for e in tl["elements"])
+    kinds = {}
+    for e in tl["elements"]:
+        for t in e["tweens"]:
+            kinds[t["ease"]["type"]] = kinds.get(t["ease"]["type"], 0) + 1
+    mix = ", ".join(f"{k} {v}" for k, v in sorted(kinds.items()))
+    typer.echo(f"{clip.name}: {len(tl['elements'])} elements, {n_tw} tweens ({mix}), "
+               f"{len(tl['groups'])} groups, {time.time() - t0:.1f}s -> {out / 'timeline.json'}")

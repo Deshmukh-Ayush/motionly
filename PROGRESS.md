@@ -39,6 +39,20 @@ Reference repo (gitignored): `git clone https://github.com/sidart10/rem referenc
   - Assumption: every element is fully opaque at some point (true for the GT set).
   - About 3 s per 960×540 clip, 8–11 s per 1080p clip (three decode passes).
 
+- **M4 Fitter**: `fit/`: segmentation (multi-scale change detection over the noise level, merges
+  gaps ≤ 3 frames, minimum change x/y 1.5 px or 0.2% of the dimension, scale 2%, opacity 0.08),
+  `least_squares` fits for every exact Penner function + CSS keyword (k = 4), a free bezier (k = 8,
+  multi-started from the best named fits) and a spring (k = 5, ζ grid, ω₀ matched to the 10–90% time).
+  Pick lowest BIC; a named fit within 2 BIC of the best wins. Visual start/end with the same 1% rule as
+  the truth. Stagger / shared-timing groups. `timeline.json` in the CLAUDE.md shape (+ a `fit` block
+  with the top-3 BIC ranking). CLI: `motionly fit <clip>`.
+  - Known-answer tests (σ = 0.2 px): exact easeOutExpo and easeInOutExpo come back as the exact names,
+    CSS `ease` as `ease`, a custom bezier within 0.03, an underdamped spring as a spring with k, c
+    within 3–5%; visual start/end within ⅓ frame.
+  - `clip_011` (1080p, 4-element spring stagger): springs within 0.3% of truth, starts within 1 ms,
+    stagger step 0.182 s exact.
+  - x / y / scale samples are ignored when the element's mass is < 30% of its peak (near-invisible).
+
 ## Next
 
-- M4: fitter.
+- M5: benchmark.
