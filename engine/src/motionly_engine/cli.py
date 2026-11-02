@@ -74,3 +74,34 @@ def generate(
     mix = ", ".join(f"{k} {v}" for k, v in sorted(stats["eases"].items()))
     typer.echo(f"{stats['clips']} clips, {stats['tweens']} tweens, {stats['stagger']} stagger, "
                f"eases: {mix}, {stats['seconds']:.1f}s total -> {out}")
+
+
+@app.command()
+def measure(
+    clip: Path = typer.Argument(..., exists=True, help="Video file."),
+    out: Path = typer.Option(None, help="Output dir (default data/runs/<clip-stem>)."),
+    plot: bool = typer.Option(False, help="Plot truth vs measured (needs clip_NNN.json beside the clip)."),
+    element: int = typer.Option(0, help="Truth element index to plot."),
+) -> None:
+    """Measure per-element x, y, scale, opacity signals from a clip."""
+    import json
+    import time
+
+    from motionly_engine.measure import measure as run_measure
+
+    t0 = time.time()
+    sig = run_measure(clip)
+    out = out or Path("data/runs") / clip.stem
+    sig.save(out / "signals.json")
+    typer.echo(f"{clip.name}: {len(sig.timestamps)} frames, {len(sig.elements)} elements, "
+               f"{time.time() - t0:.1f}s -> {out / 'signals.json'}")
+    if plot:
+        from motionly_engine.generate.scene import Scene
+        from motionly_engine.measure.plot import plot_element, truth_vs_measured
+
+        truth = clip.with_suffix(".json")
+        if not truth.exists():
+            raise typer.BadParameter(f"--plot needs {truth}")
+        t, series, title, _ = truth_vs_measured(sig, Scene.from_dict(json.loads(truth.read_text())), element)
+        png = plot_element(t, series, title, out / f"plot_el{element}.png")
+        typer.echo(f"plot -> {png}")

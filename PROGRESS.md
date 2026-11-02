@@ -27,6 +27,18 @@ Reference repo (gitignored): `git clone https://github.com/sidart10/rem referenc
     common in real launch videos.
   - TODO(M4): elastic and bounce eases.
 
+- **M3 Measurer**: `measure/`: FFmpeg decode with real timestamps (ffprobe), flat background from the
+  border strip, union of pixels that ever differ from background → components → merged into elements
+  (identical motion joins text glyphs; a frame-to-frame "handoff" joins fast movers whose per-frame
+  blobs don't overlap). Per frame: unclipped colour projection weights, summed only in a window around
+  the visible pixels; x / y = weighted centroid, scale = √trace(cov) relative to the last well-visible
+  frame, opacity = mass / (scale² · robust full-opacity level). CLI: `motionly measure <clip> [--plot]`.
+  - Accuracy at 960×540 (5 test clips): shapes x / y < 1 px; text change-over-time < 1–1.5 px; scale < 3%;
+    opacity < 0.05. Elements under ~12 px (tiny text at scale ≈ 0.4) lose contrast to compression, which
+    biases mass-based scale / opacity by up to ~10%.
+  - Assumption: every element is fully opaque at some point (true for the GT set).
+  - About 3 s per 960×540 clip, 8–11 s per 1080p clip (three decode passes).
+
 ## Next
 
-- M3: measurer (simple backgrounds).
+- M4: fitter.
