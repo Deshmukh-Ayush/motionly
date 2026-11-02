@@ -137,6 +137,19 @@ Failure types (fixes proposed, not applied, awaiting approval):
     - Core opacity broke 4 opacity timings (fade-outs).
     - Stagger detection went from 4 / 11 to 6 / 11.
 
+### Holdout (engine after batch C, no changes; CRF 26, 30 fps, mixed sizes)
+
+| Set | Tweens scored | Timing | Trajectory | Named | Spurious | Missed | Unobservable | Stagger |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| seed 1 (tuned on) | 155 | 94.8% | 85.8% | 64.3% | 7.2% | 0 | 4 | 6 / 11 |
+| seed 2 (holdout) | 133 | 96.2% | 90.2% | 78.0% | 6.3% | 0 | 3 | 13 / 16 |
+
+- Seed 2 scores higher than seed 1 on every metric, so the fixes don't look overfitted to seed 1;
+  seed 1 has more hard cases (e.g. clip_025, clip_031).
+- Weakest in both: opacity trajectory (66% / 72%) and named eases. Every named failure in both sets
+  was reported as a free bezier (25 / 25 and 13 / 13), so the remaining gap is selection, not fitting.
+- Reports: `data/runs/bench_gt_crf26_C/report.md`, `data/runs/bench_gt_seed2/report.md`.
+
 ## Next
 
-- Seed-2 holdout (40 clips, CRF 26), no changes.
+- Waiting for review of the holdout before more changes.
