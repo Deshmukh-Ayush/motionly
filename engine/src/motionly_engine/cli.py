@@ -130,3 +130,27 @@ def fit(
     mix = ", ".join(f"{k} {v}" for k, v in sorted(kinds.items()))
     typer.echo(f"{clip.name}: {len(tl['elements'])} elements, {n_tw} tweens ({mix}), "
                f"{len(tl['groups'])} groups, {time.time() - t0:.1f}s -> {out / 'timeline.json'}")
+
+
+@app.command()
+def benchmark(
+    gt: Path = typer.Option(Path("data/gt"), exists=True, help="Ground-truth dir (manifest.json + clips)."),
+    run_id: str = typer.Option(None, help="Run id (default bench_<gt-dir-name>)."),
+    runs: Path = typer.Option(Path("data/runs"), help="Runs root."),
+    fresh: bool = typer.Option(False, help="Re-measure even if cached signals exist."),
+) -> None:
+    """Measure + fit every ground-truth clip and score against the CLAUDE.md targets."""
+    from motionly_engine.benchmark.metrics import target_rows
+    from motionly_engine.benchmark.run import run_benchmark
+
+    run_dir = runs / (run_id or f"bench_{gt.name}")
+
+    def progress(clip, n_ok, n_sp, n_miss, dt):
+        typer.echo(f"{clip}: {n_ok} matched, {n_sp} spurious, {n_miss} missed, {dt:.1f}s")
+
+    res = run_benchmark(gt, run_dir, on_clip=progress, reuse=not fresh)
+    s = res["summary"]
+    typer.echo("")
+    for label, v, tgt, ok in target_rows(s):
+        typer.echo(f"{'PASS' if ok else 'FAIL'}  {label}: {100 * v:.1f}% (target {tgt})")
+    typer.echo(f"{s['matched']} matched, {s['missed']} missed, {s['spurious']} spurious -> {run_dir / 'report.md'}")
