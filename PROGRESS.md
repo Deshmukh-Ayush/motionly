@@ -110,9 +110,12 @@ Failure types (fixes proposed, not applied, awaiting approval):
     - Merged pieces are re-expressed against the group's most saturated colour (moments are linear),
       so a piece only seen at low opacity no longer inflates mass. Colours must point the same way
       from the background (cos ≥ 0.85; thin text loses chroma to 4:2:0).
-  - Spurious went up (6.7% → 7.2%, 12 tweens): 5 are small scale/x drifts on faint frames that are
-    now used, 3 are text centroid drift under scale, 4 are clip_025 ("Ship it" fades out and then
-    scales while nearly invisible; still splits). Stagger detection 4 / 11 (was 6 / 11).
+  - Spurious went up (6.7% → 7.2%, 12 tweens):
+    - 4 from clip_025 ("Ship it" fades out, then scales while nearly invisible; still splits in two);
+    - 5 on other text: y / x drift of the ink centroid while the text scales or fades (2.4–3.4 px),
+      a 0.96 → 1 scale during a fade, and a 0.85 → 1 opacity during a fast move;
+    - 3 small scale changes (1.4–2.7%) on shapes during their opacity tween.
+  - Stagger detection 4 / 11 (was 6 / 11).
 
 ## Next
 
