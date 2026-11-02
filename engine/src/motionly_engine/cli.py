@@ -1,5 +1,7 @@
 """`motionly` command-line interface."""
 
+from pathlib import Path
+
 import typer
 
 from motionly_engine import __version__
@@ -45,3 +47,30 @@ def ease(spec: str = typer.Argument(..., help="Ease name (CSS/Penner/GSAP) or x1
         curve = name
     m = easing.nearest_preset(curve)
     typer.echo(f"nearest: {m.name} ({m.kind}), dist {m.dist:.3f}")
+
+
+@app.command()
+def generate(
+    count: int = typer.Option(40, help="Number of clips."),
+    seed: int = typer.Option(1, help="Random seed."),
+    out: Path = typer.Option(Path("data/gt"), help="Output directory."),
+    size: str = typer.Option("mixed", help="960x540, 1920x1080, WxH, or mixed (alternates 960x540 / 1920x1080)."),
+    fps: int = typer.Option(30, help="Frame rate: 24, 30 or 60."),
+    crf: int = typer.Option(26, help="H.264 CRF."),
+) -> None:
+    """Render ground-truth clips (clip_NNN.mp4 + clip_NNN.json)."""
+    from motionly_engine.generate import FPS_CHOICES, generate_clips
+
+    if fps not in FPS_CHOICES:
+        raise typer.BadParameter(f"--fps must be one of {FPS_CHOICES}")
+
+    def progress(scene) -> None:
+        n_tw = sum(len(e.tweens) for e in scene.elements)
+        tag = " stagger" if scene.groups else ""
+        typer.echo(f"{scene.id}  {scene.width}x{scene.height}  {scene.duration_s:.2f}s  "
+                   f"{len(scene.elements)} el  {n_tw} tw{tag}")
+
+    stats = generate_clips(count, seed, out, size=size, fps=fps, crf=crf, on_clip=progress)
+    mix = ", ".join(f"{k} {v}" for k, v in sorted(stats["eases"].items()))
+    typer.echo(f"{stats['clips']} clips, {stats['tweens']} tweens, {stats['stagger']} stagger, "
+               f"eases: {mix}, {stats['seconds']:.1f}s total -> {out}")
