@@ -56,10 +56,13 @@ class MomentAccumulator:
         return [np.array(r) for r in self.rows]  # each (n_frames, 5)
 
 
-def signals_from_moments(mom: np.ndarray, vis_frac: float = 0.02) -> dict[str, np.ndarray]:
+MIN_MASS = 3.0  # visible: at least ~3 fully covered pixels' worth of signal (absolute, not relative to peak)
+
+
+def signals_from_moments(mom: np.ndarray) -> dict[str, np.ndarray]:
     m0 = mom[:, 0]
     peak = np.max(m0) if len(m0) else 0.0
-    vis = m0 > vis_frac * peak
+    vis = m0 > MIN_MASS
     with np.errstate(divide="ignore", invalid="ignore"):
         x = np.where(vis, mom[:, 1] / m0, np.nan)
         y = np.where(vis, mom[:, 2] / m0, np.nan)
@@ -77,70 +80,118 @@ def signals_from_moments(mom: np.ndarray, vis_frac: float = 0.02) -> dict[str, n
     if len(idx):
         d = dens[idx]
         ref = float(np.median(d[d >= 0.9 * np.max(d)]))  # robust "fully opaque" level
-        opacity = np.where(np.isfinite(dens), dens / ref, 0.0)
-        opacity = np.where(vis, opacity, np.clip(m0 / (ref * size[idx[-1]] ** 2), 0, None))
+        # When the element is faint its size estimate is noisy: use the size from the nearest frame
+        # with a solid signal instead.
+        solid = np.nonzero(np.isfinite(size) & (m0 >= 0.05 * peak))[0]
+        if len(solid):
+            near = solid[np.clip(np.searchsorted(solid, np.arange(len(m0))), 0, len(solid) - 1)]
+            prev = solid[np.clip(np.searchsorted(solid, np.arange(len(m0))) - 1, 0, len(solid) - 1)]
+            pick = np.where(np.abs(prev - np.arange(len(m0))) < np.abs(near - np.arange(len(m0))), prev, near)
+            size_for_op = np.where(m0 >= 0.05 * peak, size, size[pick])
+        else:
+            size_for_op = size
+        with np.errstate(divide="ignore", invalid="ignore"):
+            opacity = np.clip(m0, 0, None) / (ref * size_for_op**2)
+        opacity = np.where(np.isfinite(opacity), opacity, 0.0)
     else:
         opacity = np.zeros_like(m0)
     return {"x": x, "y": y, "scale": scale, "opacity": opacity, "size_px": size}
 
 
-def _same_motion(sa: dict, sb: dict, ma: np.ndarray, mb: np.ndarray) -> bool:
-    """Visible on the same frames, translating and scaling identically, constant mass ratio."""
+def _rigid_scaled(sa: dict, sb: dict, ma: np.ndarray, mb: np.ndarray) -> bool:
+    """Parts of one element: visible on the same frames and moving as one rigid body that translates
+    and scales about a shared centre (so the vector between them scales with their sizes), with a
+    constant mass ratio. Covers glyphs of static, moving and scaling text."""
     va, vb = np.isfinite(sa["x"]), np.isfinite(sb["x"])
     if va.sum() < 3 or np.any(va != vb):
         return False
-    for p in ("x", "y"):
-        da, db = sa[p][va] - sa[p][va][0], sb[p][va] - sb[p][va][0]
-        if np.max(np.abs(da - db)) >= 0.5:
-            return False
+    # Compare motion only where both parts are clearly visible (faint frames are noisy).
+    va = va & (ma[:, 0] >= 0.2 * np.max(ma[:, 0])) & (mb[:, 0] >= 0.2 * np.max(mb[:, 0]))
+    if va.sum() < 3:
+        return False
+    ref = int(np.nonzero(va)[0][-1])
+    za, zb = sa["size_px"][va] / sa["size_px"][ref], sb["size_px"][va] / sb["size_px"][ref]
+    if not (np.all(np.isfinite(za)) and np.all(np.isfinite(zb))) or np.max(np.abs(za - zb)) >= 0.03:
+        return False
+    s = (za + zb) / 2
+    dx = sa["x"][va] - sb["x"][va]
+    dy = sa["y"][va] - sb["y"][va]
+    d0x, d0y = sa["x"][ref] - sb["x"][ref], sa["y"][ref] - sb["y"][ref]
+    err = np.hypot(dx - s * d0x, dy - s * d0y)
+    if np.max(err) >= 0.5 + 0.01 * np.hypot(d0x, d0y):
+        return False
     ratio = ma[va, 0] / mb[va, 0]
-    if np.std(ratio) / abs(np.mean(ratio)) >= 0.05:
-        return False
-    za, zb = sa["size_px"][va] / sa["size_px"][va][-1], sb["size_px"][va] / sb["size_px"][va][-1]
-    return bool(np.max(np.abs(za - zb)) < 0.03)
+    return bool(np.std(ratio) / abs(np.mean(ratio)) < 0.05)
 
 
-def _handoff(ma: np.ndarray, mb: np.ndarray, vis: float = 0.02, strong: float = 0.5) -> bool:
-    """A fast mover leaves gaps in the union: the element is in A on frame t and in B on t+1."""
-    a, b = ma[:, 0], mb[:, 0]
-    pa, pb = a.max(), b.max()
-    if pa <= 0 or pb <= 0:
+def _handoff(sa: dict, sb: dict, ma: np.ndarray, mb: np.ndarray, max_jump: float) -> bool:
+    """A fast mover leaves gaps in the union: the element is in A on frame t and in B on t+1.
+    Joined by position (a plausible jump) and shape (same size and density), at any opacity."""
+    va, vb = np.isfinite(sa["x"]), np.isfinite(sb["x"])
+    if not va.any() or not vb.any() or np.any(va & vb):
         return False
-    va, vb = a > vis * pa, b > vis * pb
-    if np.any(va & vb):
-        return False
-    sa, sb = a >= strong * pa, b >= strong * pb
-    for x, y, sx, sy in ((a, b, sa, sb), (b, a, sb, sa)):
-        hits = np.nonzero(sx[:-1] & sy[1:])[0]
-        for t in hits:
-            r = x[t] / y[t + 1]
-            if 0.67 <= r <= 1.5:
+    for s1, s2, m1, m2, v1, v2 in ((sa, sb, ma, mb, va, vb), (sb, sa, mb, ma, vb, va)):
+        for t in np.nonzero(v1[:-1] & v2[1:])[0]:
+            z1, z2 = s1["size_px"][t], s2["size_px"][t + 1]
+            if not (np.isfinite(z1) and np.isfinite(z2)) or not 0.8 <= z1 / z2 <= 1.25:
+                continue
+            d1, d2 = m1[t, 0] / z1**2, m2[t + 1, 0] / z2**2
+            if not 0.67 <= d1 / d2 <= 1.5:
+                continue
+            if np.hypot(s2["x"][t + 1] - s1["x"][t], s2["y"][t + 1] - s1["y"][t]) <= max_jump:
                 return True
     return False
 
 
-def merge_components(moms: list[np.ndarray], comps: list[Component], min_dim: int) -> list[list[int]]:
-    """Group components that are one element: glyphs moving together, or a fast mover split by gaps."""
+def merge_components(moms: list[np.ndarray], comps: list[Component], bg: np.ndarray, min_dim: int,
+                     max_dim: int | None = None) -> list[tuple[list[int], np.ndarray, np.ndarray]]:
+    """Group components that are one element: parts moving as one rigid (scaling) body, or a fast
+    mover split by gaps. Returns (component indices, moments, colour) per element.
+
+    Each component's colour is estimated from the most saturated pixels it ever saw, so a component
+    only seen at low opacity gets a faded colour and an inflated mass. Moments are linear in the
+    colour projection, so a group re-expresses every member against its most saturated colour:
+    m_ref = m_i * |c_i - bg| / |c_ref - bg| (colours must point the same way from the background).
+    """
+    bg = np.asarray(bg, dtype=np.float64)
+    dirs = [np.asarray(c.color, dtype=np.float64) - bg for c in comps]
+    norms = [max(float(np.linalg.norm(d)), 1e-9) for d in dirs]
     groups = [[i] for i in range(len(moms))]
+
+    def ref_of(g):
+        return max(g, key=lambda i: norms[i])
+
+    def moments(g, ref):
+        return sum(moms[i] * (norms[i] / norms[ref]) for i in g)
+
+    def parallel(i, j):
+        # Loose: thin text strokes lose chroma to 4:2:0 subsampling, so colour estimates of the same
+        # element can differ; size, density and position checks still have to agree.
+        return float(dirs[i] @ dirs[j]) / (norms[i] * norms[j]) >= 0.85
 
     def bbox(g):
         return (min(comps[i].bbox[0] for i in g), min(comps[i].bbox[1] for i in g),
                 max(comps[i].bbox[2] for i in g), max(comps[i].bbox[3] for i in g))
 
     gap_max = 0.03 * min_dim
+    max_jump = 0.3 * (max_dim or min_dim)
     changed = True
     while changed:
         changed = False
-        gm = [sum(moms[i] for i in g) for g in groups]
-        gs = [signals_from_moments(m) for m in gm]
         for a in range(len(groups)):
             for b in range(a + 1, len(groups)):
-                if _handoff(gm[a], gm[b]):
+                ra, rb = ref_of(groups[a]), ref_of(groups[b])
+                if not parallel(ra, rb):
+                    continue
+                ref = ra if norms[ra] >= norms[rb] else rb
+                ma, mb = moments(groups[a], ref), moments(groups[b], ref)
+                sa, sb = signals_from_moments(ma), signals_from_moments(mb)
+                if _handoff(sa, sb, ma, mb, max_jump):
                     ok = True
                 else:
                     ba, bb = bbox(groups[a]), bbox(groups[b])
                     gap = max(bb[0] - ba[2], ba[0] - bb[2], bb[1] - ba[3], ba[1] - bb[3], 0)
-                    ok = gap <= gap_max and _same_motion(gs[a], gs[b], gm[a], gm[b])
+                    ok = gap <= gap_max and _rigid_scaled(sa, sb, ma, mb)
                 if ok:
                     groups[a] = sorted(groups[a] + groups[b])
                     del groups[b]
@@ -148,4 +199,8 @@ def merge_components(moms: list[np.ndarray], comps: list[Component], min_dim: in
                     break
             if changed:
                 break
-    return sorted(groups, key=lambda g: min(g))
+    out = []
+    for g in sorted(groups, key=lambda g: min(g)):
+        ref = ref_of(g)
+        out.append((g, moments(g, ref), np.asarray(comps[ref].color, dtype=np.float64)))
+    return out

@@ -14,7 +14,7 @@ from motionly_engine.fit.segment import find_moves, noise_sigma
 from motionly_engine.fit.select import select, tween_dict
 from motionly_engine.measure import PROPS, ElementSignals, Signals
 
-MIN_REL_MASS = 0.3  # x / y / scale are unreliable when the element is nearly invisible
+MIN_OPACITY = 0.1  # x / y / scale are unreliable when the element is nearly invisible
 SIGMA_FLOOR = {"x": 0.01, "y": 0.01, "scale": 1e-4, "opacity": 1e-3}
 
 
@@ -35,8 +35,13 @@ def fit_signal(t: np.ndarray, v: np.ndarray, w: np.ndarray, prop: str, floor: fl
 
 
 def fit_element(el: ElementSignals, ts: np.ndarray, width: int, height: int, frame: float) -> list[dict]:
-    peak = np.nanmax(el.mass) if np.any(np.isfinite(el.mass)) else 0.0
-    rel = np.where(np.isfinite(el.mass), el.mass / peak, 0.0) if peak > 0 else np.zeros_like(ts)
+    # Visibility from the opacity estimate and the absolute signal (not mass relative to the peak,
+    # which would confuse a small element with a faint one).
+    from motionly_engine.measure.signals import MIN_MASS
+
+    op = np.nan_to_num(el.signals["opacity"], nan=0.0)
+    mass = np.nan_to_num(el.mass, nan=0.0)
+    seen = (op >= MIN_OPACITY) & (mass > MIN_MASS)
     tweens = []
     for prop in PROPS:
         v = el.signals[prop]
@@ -44,8 +49,8 @@ def fit_element(el: ElementSignals, ts: np.ndarray, width: int, height: int, fra
             ok = np.isfinite(v)
             w = np.ones_like(v)
         else:
-            ok = np.isfinite(v) & (rel >= MIN_REL_MASS)
-            w = np.clip(rel / 0.6, 0.2, 1.0)
+            ok = np.isfinite(v) & seen
+            w = np.clip(op / 0.5, 0.2, 1.0)
         if ok.sum() < 4:
             continue
         tweens += fit_signal(ts[ok], v[ok], w[ok], prop, change_floor(prop, width, height), frame)

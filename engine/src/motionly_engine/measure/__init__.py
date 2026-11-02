@@ -114,14 +114,12 @@ def measure(clip: Path) -> Signals:
     moms = mom.moments()
 
     elements = []
-    for gi, group in enumerate(merge_components(moms, comps, min_dim)):
-        m = sum(moms[i] for i in group)
+    merged = merge_components(moms, comps, bg.color, min_dim, max(info.width, info.height))
+    for gi, (group, m, color) in enumerate(merged):
         sig = signals_from_moments(m)
         x0 = min(comps[i].bbox[0] for i in group)
         y0 = min(comps[i].bbox[1] for i in group)
         x1 = max(comps[i].bbox[2] for i in group)
         y1 = max(comps[i].bbox[3] for i in group)
-        w = np.array([comps[i].mask.sum() for i in group], dtype=float)
-        color = (np.array([comps[i].color for i in group]) * w[:, None]).sum(0) / w.sum()
         elements.append(ElementSignals(f"el{gi}", (x0, y0, x1, y1), color.tolist(), sig, m[:, 0]))
     return Signals(clip.stem, info.width, info.height, info.fps, info.timestamps, bg.color.tolist(), elements)

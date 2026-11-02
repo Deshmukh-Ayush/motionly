@@ -87,6 +87,7 @@ Failure types (fixes proposed, not applied, awaiting approval):
 |---|---:|---:|---:|---:|---:|---:|
 | M5 baseline (old 1% start/end metric) | 73.2% | 76.5% | 63.8% | 6.7% | 6 | – |
 | A: metric + unobservable + fixed-noise BIC | 84.9% | 77.6% | 60.3% | 6.7% | 3 | 4 |
+| B: visibility + element joining | 95.5% | 86.5% | 65.7% | 7.2% | 0 | 4 |
 
 - Batch A: CLAUDE.md timing target is now 5% start / 50% midpoint / 95% end (end = settles within 5%),
   each within 1 frame; 1% times kept in timeline.json. Moves with opacity < 0.1 for over half their
@@ -97,6 +98,22 @@ Failure types (fixes proposed, not applied, awaiting approval):
     during motion, so RSS/σ² magnifies the bezier's small advantage. 26 of the 27 failures were
     reported as a free bezier; in 16 the correct name was the runner-up.
 
+- Batch B:
+  - x / y / scale are used where opacity ≥ 0.1 and mass > 3 px (absolute), weighted by opacity,
+    instead of mass relative to the peak.
+  - Element joining:
+    - A frame-to-frame handoff joins pieces by position (jump ≤ 30% of the frame) and shape
+      (size within 25%, density within 1.5×) at any opacity.
+    - Parts of one element are grouped when they move as one rigid body that translates and scales
+      (vector between them scales with their sizes), compared on frames where both have ≥ 20% of
+      their peak mass.
+    - Merged pieces are re-expressed against the group's most saturated colour (moments are linear),
+      so a piece only seen at low opacity no longer inflates mass. Colours must point the same way
+      from the background (cos ≥ 0.85; thin text loses chroma to 4:2:0).
+  - Spurious went up (6.7% → 7.2%, 12 tweens): 5 are small scale/x drifts on faint frames that are
+    now used, 3 are text centroid drift under scale, 4 are clip_025 ("Ship it" fades out and then
+    scales while nearly invisible; still splits). Stagger detection 4 / 11 (was 6 / 11).
+
 ## Next
 
-- Batch B (visibility, element joining), then batch C, then the seed-2 holdout.
+- Batch C, then the seed-2 holdout.

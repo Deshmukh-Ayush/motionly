@@ -76,3 +76,13 @@ def test_roundtrip_and_plot(clips, tmp_path):
     png = plot_element(t, series, title, tmp_path / "plot.png")
     assert png.stat().st_size > 1000
     json.dumps(sig.to_dict())
+
+
+@pytest.mark.parametrize("index", [29, 31])
+def test_one_element_per_truth_element_1080p(tmp_path, index):
+    """Seed 1 scenes that split before: 29 = scaling text "Pro" (letters drift apart as it scales),
+    31 = a fast mover whose frame-to-frame handoff happens at opacity 0.2."""
+    scene = generate_clip(1, index, tmp_path, 1920, 1080)
+    sig = measure(tmp_path / f"{scene.id}.mp4")
+    assert len(sig.elements) == len(scene.elements)
+    assert len(_match(scene, sig)) == len(scene.elements)
